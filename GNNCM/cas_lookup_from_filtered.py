@@ -5,19 +5,19 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 
 import requests
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_FILTERED_TXT = str(PROJECT_ROOT / "results" / "similarity" / "Filtered_results_0.95_1_million.txt")
-DEFAULT_OUTPUT_CSV = str(PROJECT_ROOT / "results" / "similarity")
+DEFAULT_FILTERED_TXT = "results/similarity/Filtered_results_0.95_1_million.txt"
+DEFAULT_OUTPUT_CSV = "results/similarity"
 
 CAS_REGEX = re.compile(r"\b\d{2,7}-\d{2}-\d\b")
 PUBCHEM_BASE = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
+
 
 class RateLimiter:
     def __init__(self, qps: float) -> None:
@@ -35,6 +35,7 @@ class RateLimiter:
                 time.sleep(self._next_time - now)
                 now = time.perf_counter()
             self._next_time = now + interval
+
 
 def load_cache(cache_path: Optional[str]) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
     if not cache_path:
@@ -54,6 +55,7 @@ def load_cache(cache_path: Optional[str]) -> Dict[str, Tuple[Optional[str], Opti
             cache[smiles] = (value[0], value[1])
     return cache
 
+
 def save_cache(cache_path: Optional[str], cache: Dict[str, Tuple[Optional[str], Optional[str]]]) -> None:
     if not cache_path:
         return
@@ -62,14 +64,15 @@ def save_cache(cache_path: Optional[str], cache: Dict[str, Tuple[Optional[str], 
     payload = {smiles: {"cas": cas, "cid": cid} for smiles, (cas, cid) in cache.items()}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-@ dataclass
 
+@dataclass
 class MatchRecord:
     anchor_id: str
     anchor_smiles: str
     library_id: str
     library_smiles: str
     similarity: float
+
 
 def parse_filtered_results(path: str) -> List[MatchRecord]:
     records: List[MatchRecord] = []
@@ -87,30 +90,31 @@ def parse_filtered_results(path: str) -> List[MatchRecord]:
             if not stripped:
                 continue
 
-            anchor_match = anchor_pattern.match (stripped)
+            anchor_match = anchor_pattern.match(stripped)
             if anchor_match:
                 anchor_id = anchor_match.group(1).strip()
                 anchor_smiles = anchor_match.group(2).strip()
                 continue
 
-            match_match = match_pattern.match (stripped)
+            match_match = match_pattern.match(stripped)
             if match_match and anchor_id and anchor_smiles:
                 library_id = match_match.group(1).strip()
                 library_smiles = match_match.group(2).strip()
                 similarity = float(match_match.group(3))
                 records.append(
                     MatchRecord(
-                    anchor_id = anchor_id,
-                    anchor_smiles = anchor_smiles,
-                    library_id = library_id,
-                    library_smiles = library_smiles,
-                    similarity = similarity,
-                )
+                        anchor_id=anchor_id,
+                        anchor_smiles=anchor_smiles,
+                        library_id=library_id,
+                        library_smiles=library_smiles,
+                        similarity=similarity,
+                    )
                 )
 
     return records
 
-def find_cid_for_smiles(session: requests.Session, smiles: str, timeout: int=20) -> Optional[str]:
+
+def find_cid_for_smiles(session: requests.Session, smiles: str, timeout: int = 20) -> Optional[str]:
     url = f"{PUBCHEM_BASE}/compound/smiles/{requests.utils.quote(smiles)}/cids/TXT"
     response = session.get(url, timeout=timeout)
     if response.status_code != 200:
@@ -118,7 +122,8 @@ def find_cid_for_smiles(session: requests.Session, smiles: str, timeout: int=20)
     cid = response.text.strip().splitlines()[0]
     return cid if cid else None
 
-def fetch_synonyms_by_cid(session: requests.Session, cid: str, timeout: int=20) -> List[str]:
+
+def fetch_synonyms_by_cid(session: requests.Session, cid: str, timeout: int = 20) -> List[str]:
     url = f"{PUBCHEM_BASE}/compound/cid/{cid}/synonyms/JSON"
     response = session.get(url, timeout=timeout)
     if response.status_code != 200:
@@ -130,12 +135,14 @@ def fetch_synonyms_by_cid(session: requests.Session, cid: str, timeout: int=20) 
         synonyms.extend(info.get("Synonym", []))
     return synonyms
 
+
 def extract_cas_from_synonyms(synonyms: List[str]) -> Optional[str]:
     for synonym in synonyms:
         match = CAS_REGEX.search(synonym)
         if match:
             return match.group(0)
     return None
+
 
 def resolve_cas_for_smiles(
     session: requests.Session,
@@ -160,9 +167,10 @@ def resolve_cas_for_smiles(
         except (requests.RequestException, ValueError, KeyError):
             if attempt == retries:
                 return None, None
-            backoff = pause * (2**(attempt - 1))
+            backoff = pause * (2 ** (attempt - 1))
             time.sleep(backoff)
     return None, None
+
 
 def resolve_many_smiles(
     smiles_list: List[str],
@@ -188,10 +196,10 @@ def resolve_many_smiles(
             cas_number, cid = resolve_cas_for_smiles(
                 session,
                 smiles,
-                retries = retries,
-                pause = pause,
-                timeout = timeout,
-                limiter = limiter,
+                retries=retries,
+                pause=pause,
+                timeout=timeout,
+                limiter=limiter,
             )
         with lock:
             cache[smiles] = (cas_number, cid)
@@ -211,8 +219,9 @@ def resolve_many_smiles(
             _ = future.result()
             done += 1
             if done % 25 == 0 or done == total:
-                print(f"Completed {done} / {total} queries")
+                print(f"Completed {done}/{total} lookups")
     return cache
+
 
 def build_output_path(filtered_path: str, output_path: Optional[str]) -> str:
     if output_path:
@@ -230,7 +239,12 @@ def build_output_path(filtered_path: str, output_path: Optional[str]) -> str:
     base = os.path.splitext(os.path.basename(filtered_path))[0]
     return os.path.join(directory, f"{base}_cas.csv")
 
-def write_results(records: List[MatchRecord], cas_map: Dict[str, Tuple[Optional[str], Optional[str]]], output_csv: str) -> None:
+
+def write_results(
+    records: List[MatchRecord],
+    cas_map: Dict[str, Tuple[Optional[str], Optional[str]]],
+    output_csv: str,
+) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(output_csv)), exist_ok=True)
     header = [
         "anchor_id",
@@ -248,81 +262,82 @@ def write_results(records: List[MatchRecord], cas_map: Dict[str, Tuple[Optional[
             cas_number, cid = cas_map.get(record.library_smiles, (None, None))
             writer.writerow(
                 [
-                record.anchor_id,
-                record.anchor_smiles,
-                record.library_id,
-                record.library_smiles,
-                f"{record.similarity:  .4f}",
-                cid or "",
-                cas_number or "",
-            ]
+                    record.anchor_id,
+                    record.anchor_smiles,
+                    record.library_id,
+                    record.library_smiles,
+                    f"{record.similarity:.4f}",
+                    cid or "",
+                    cas_number or "",
+                ]
             )
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description = "Look up CAS numbers for library molecules listed in a filtered similarity report."
+        description="Look up CAS numbers for library molecules listed in a filtered similarity report."
     )
     parser.add_argument(
         "--filtered_txt",
-        default = DEFAULT_FILTERED_TXT,
-        help = "Filtered similarity report generated by smiles_similarity_search",
+        default=DEFAULT_FILTERED_TXT,
+        help="Filtered report generated by smiles_similarity_search.py.",
     )
     parser.add_argument(
         "--output_csv",
-        default = DEFAULT_OUTPUT_CSV,
-        help = "Output CSV path; by default a file is created next to the input report",
+        default=DEFAULT_OUTPUT_CSV,
+        help="Output CSV path or output directory.",
     )
     parser.add_argument(
         "--pause",
-        type = float,
-        default = 0.5,
-        help = "Wait time in seconds before retrying a failed request",
+        type=float,
+        default=0.5,
+        help="Base retry wait time in seconds after a failed request.",
     )
     parser.add_argument(
         "--retries",
-        type = int,
-        default = 3,
-        help = "Maximum retry count for a single SMILES query",
+        type=int,
+        default=3,
+        help="Maximum retry count for each SMILES lookup.",
     )
     parser.add_argument(
         "--timeout",
-        type = int,
-        default = 20,
-        help = "HTTP request timeout in seconds",
+        type=int,
+        default=20,
+        help="HTTP request timeout in seconds.",
     )
     parser.add_argument(
         "--workers",
-        type = int,
-        default = 6,
-        help = "Number of worker threads to use; values around 2-6 are usually safer",
+        type=int,
+        default=6,
+        help="Number of worker threads to use for PubChem lookups.",
     )
     parser.add_argument(
         "--qps",
-        type = float,
-        default = 6.0,
-        help = "Global request rate limit in queries per second; use 0 to disable the limit",
+        type=float,
+        default=6.0,
+        help="Global request rate limit in queries per second. Use 0 to disable throttling.",
     )
     parser.add_argument(
         "--cache_path",
-        default = None,
-        help = "Optional JSON cache file path for resume support and request deduplication",
+        default=None,
+        help="Optional JSON cache file used to resume lookups and avoid repeated requests.",
     )
     parser.add_argument(
         "--resume",
-        action = "store_true",
-        help = "Resume from cache; skip requests for SMILES values that already have cached results",
+        action="store_true",
+        help="Skip SMILES values that already exist in the cache.",
     )
     args = parser.parse_args()
 
     if not os.path.exists(args.filtered_txt):
-        raise FileNotFoundError(f"Filtered report file not found: {args.filtered_txt}")
+        raise FileNotFoundError(f"Filtered result file not found: {args.filtered_txt}")
 
-    print("Parsing filtered report...")
+    print("Parsing filtered result file...")
     records = parse_filtered_results(args.filtered_txt)
     if not records:
-        print("No matching records were parsed. Exiting.")
+        print("No match records were parsed. Exiting.")
         return
-    print(f"Parsed {len(records)} matching records.")
+    print(f"Parsed {len(records)} match records.")
 
     unique_smiles = {record.library_smiles for record in records}
     print(f"Unique library molecules to query: {len(unique_smiles)}")
@@ -332,28 +347,29 @@ def main() -> None:
         print(f"Loaded cached records: {len(cas_map)}")
 
     smiles_list = sorted(unique_smiles)
-    pending_smiles = smiles_list
+    to_query = smiles_list
     if args.resume and cas_map:
-        pending_smiles = [s for s in smiles_list if s not in cas_map]
-        print(f"Resume mode enabled: querying {len(pending_smiles)} / {len(smiles_list)} molecules")
+        to_query = [smiles for smiles in smiles_list if smiles not in cas_map]
+        print(f"Resume mode enabled: querying {len(to_query)}/{len(smiles_list)} remaining SMILES")
 
-    if pending_smiles:
+    if to_query:
         resolve_many_smiles(
-            pending_smiles,
-            retries = args.retries,
-            pause = args.pause,
-            timeout = args.timeout,
-            workers = args.workers,
-            qps = args.qps,
-            cache = cas_map,
-            cache_path = args.cache_path,
-            resume = args.resume,
+            to_query,
+            retries=args.retries,
+            pause=args.pause,
+            timeout=args.timeout,
+            workers=args.workers,
+            qps=args.qps,
+            cache=cas_map,
+            cache_path=args.cache_path,
+            resume=args.resume,
         )
 
     output_csv = build_output_path(args.filtered_txt, args.output_csv)
-    print(f"Writing results to {output_csv} ...")
+    print(f"Writing results to {output_csv}...")
     write_results(records, cas_map, output_csv)
     print("Done.")
+
 
 if __name__ == "__main__":
     main()
