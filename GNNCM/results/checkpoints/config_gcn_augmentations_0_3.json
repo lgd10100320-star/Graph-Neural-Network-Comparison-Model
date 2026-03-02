@@ -1,0 +1,29 @@
+{
+    "encoder_name": "gcn",
+    "input_dim": 19,
+    "hidden_dim": 256,
+    "projection_dim": 128,
+    "num_layers": 5,
+    "dropout": 0.5,
+    "temperature": 0.1,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-05,
+    "batch_size": 512,
+    "epochs": 100,
+    "augmentation_methods": [
+        "node_masking",
+        "edge_deletion",
+        "subgraph_deletion"
+    ],
+    "augmentation_preset": "augmentations_0.3",
+    "augmentation_presets": [
+        "augmentations_0.1",
+        "augmentations_0.2",
+        "augmentations_0.25",
+        "augmentations_0.3"
+    ],
+    "augmentation_rates": {},
+    "data_path": "data/processed/processed_data.pkl",
+    "save_dir": "results/checkpoints",
+    "log_dir": "logs/tensorboard"
+}
