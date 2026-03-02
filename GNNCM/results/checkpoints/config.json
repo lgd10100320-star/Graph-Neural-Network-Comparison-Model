@@ -1,0 +1,26 @@
+{
+    "encoder_name": "gin",
+    "input_dim": 19,
+    "hidden_dim": 256,
+    "projection_dim": 128,
+    "num_layers": 5,
+    "dropout": 0.5,
+    "temperature": 0.1,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-05,
+    "batch_size": 512,
+    "epochs": 100,
+    "augmentation_methods": [
+        "node_masking",
+        "edge_deletion",
+        "subgraph_deletion"
+    ],
+    "augmentation_rates": {
+        "node_masking": 0.15,
+        "edge_deletion": 0.2,
+        "subgraph_deletion": 0.1
+    },
+    "data_path": "data/processed/processed_data.pkl",
+    "save_dir": "results/checkpoints",
+    "log_dir": "logs/tensorboard"
+}
